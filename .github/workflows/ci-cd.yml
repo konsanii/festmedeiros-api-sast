@@ -7,15 +7,31 @@ on:
     branches: [main, master, develop]
 
 jobs:
-  sonarcloud:
-    name: SonarCloud Analysis
+  test_and_sonar:
+    name: Test & SonarCloud
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Necessário para análise completa do SonarCloud
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.test' package.json > /dev/null 2>&1; then
+            npm test
+          else
+            echo "Nenhum script de teste definido, pulando etapa de testes."
+          fi
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
@@ -26,7 +42,7 @@ jobs:
   docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: sonarcloud
+    needs: test_and_sonar
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
 
     steps:
@@ -42,6 +58,13 @@ jobs:
           username: lucasconsani
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Set image tags
+        id: vars
+        run: |
+          BRANCH_NAME="${GITHUB_REF##*/}"
+          SAFE_BRANCH=$(echo "$BRANCH_NAME" | tr '/' '-')
+          echo "branch_tag=$SAFE_BRANCH" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -50,3 +73,4 @@ jobs:
           tags: |
             lucasconsani/festmedeiros-api-sast:latest
             lucasconsani/festmedeiros-api-sast:${{ github.sha }}
+            lucasconsani/festmedeiros-api-sast:${{ steps.vars.outputs.branch_tag }}
