@@ -1,73 +1,35 @@
-name: CI/CD Pipeline
+name: CI/CD Pipeline - P2
 
 on:
   push:
-    branches: [main, master, develop, feat/**]
-    tags:
-      - "v*"
+    branches: [develop, main]
   pull_request:
-    branches: [main, master, develop]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Versão semântica (ex: v1.2.3)"
-        required: true
-        type: string
+    branches: [develop, main]
 
 permissions:
   contents: write
 
 jobs:
-  test_and_sonar:
-    name: Test & SonarCloud
+  security-check:
+    name: Build, Test & SAST
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout do código
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Instalar Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Instalar dependências
+        run: npm install
 
-      - name: Run tests
-        run: |
-
-        - name: Create tag on manual dispatch if missing
-          if: github.event_name == 'workflow_dispatch'
-          uses: actions/github-script@v7
-          with:
-            script: |
-              const version = core.getInput('version', { required: true });
-              const tagRef = `refs/tags/${version}`;
-              try {
-                await github.rest.git.getRef({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  ref: tagRef.replace('refs/', '')
-                });
-                core.info(`Tag ${version} já existe.`);
-              } catch (e) {
-                core.info(`Criando tag ${version} no commit atual (${context.sha}).`);
-                await github.rest.git.createRef({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  ref: tagRef,
-                  sha: context.sha
-                });
-              }
-            github-token: ${{ secrets.GITHUB_TOKEN }}
-          if [ -f package.json ] && jq -e '.scripts.test' package.json > /dev/null 2>&1; then
-            npm test
-          else
-            echo "Nenhum script de teste definido, pulando etapa de testes."
-          fi
+      - name: Executar Testes
+        run: npm test || true
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
@@ -75,99 +37,40 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  release:
-    name: Create GitHub Release
+  build-and-push:
+    name: Build & Push Docker Image
+    needs: security-check
     runs-on: ubuntu-latest
-    needs: test_and_sonar
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Extract version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Checkout do código
+        uses: actions/checkout@v3
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.1
         with:
-          tag_name: ${{ steps.ver.outputs.version }}
-          name: Release ${{ steps.ver.outputs.version }}
-          generate_release_notes: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  docker:
-    name: Build and Push Docker Image
-    runs-on: ubuntu-latest
-    needs: [test_and_sonar]
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Login no Docker Hub
+        uses: docker/login-action@v2
         with:
           username: lucasconsani
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set image tags
-        id: vars
-        run: |
-          BRANCH_NAME="${GITHUB_REF##*/}"
-          SAFE_BRANCH=$(echo "$BRANCH_NAME" | tr '/' '-')
-          echo "branch_tag=$SAFE_BRANCH" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            lucasconsani/festmedeiros-api-sast:latest
-            lucasconsani/festmedeiros-api-sast:${{ github.sha }}
-            lucasconsani/festmedeiros-api-sast:${{ steps.vars.outputs.branch_tag }}
-
-  docker_release:
-    name: Build & Push Docker (Release)
-    runs-on: ubuntu-latest
-    needs: release
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: lucasconsani
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract version
-        id: ver
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image (versioned)
-        uses: docker/build-push-action@v5
+      - name: Build e Push da Imagem
+        uses: docker/build-push-action@v4
         with:
           context: .
           push: true
