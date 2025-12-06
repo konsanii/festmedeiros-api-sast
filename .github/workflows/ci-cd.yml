@@ -76,4 +76,4 @@ jobs:
           push: true
           tags: |
             lucasconsani/festmedeiros-api-sast:latest
-            lucasconsani/festmedeiros-api-sast:${{ steps.ver.outputs.version }}
+            lucasconsani/festmedeiros-api-sast:${{ steps.tag_version.outputs.new_tag }}
