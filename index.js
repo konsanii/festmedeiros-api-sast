@@ -20,7 +20,7 @@ app.get("/", (req, res) => {
 });
 
 // Teste DB
-app.get("/users", async (req, res) => {
+app.get("/users_2", async (req, res) => {
   try {
     const [rows] = await db.query("SELECT * FROM users");
     res.json(rows);
