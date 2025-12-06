@@ -16,11 +16,11 @@ app.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // Teste básico
 app.get("/", (req, res) => {
-  res.json({ message: "API rodando com sucesso!" });
+  res.json({ message: "API ta funcionado, blz?" });
 });
 
 // Teste DB
-app.get("/users_2", async (req, res) => {
+app.get("/users", async (req, res) => {
   try {
     const [rows] = await db.query("SELECT * FROM users");
     res.json(rows);
